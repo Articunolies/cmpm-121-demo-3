@@ -7,7 +7,7 @@ import luck from "./luck.ts";
 
 const APP_NAME = "Treasure Seeker 🏴‍☠️";
 const START_LOCATION = leaflet.latLng(36.98949379578401, -122.06277128548504);
-const MAP_ZOOM_LEVEL = 18;
+const MAP_ZOOM_LEVEL = 17;
 const GRID_SIZE = 1e-4;
 const SEARCH_RADIUS = 8;
 const TREASURE_SPAWN_PROBABILITY = 0.1;
@@ -26,7 +26,7 @@ app.innerHTML = `
 
     <aside class="sidebar" id="sidebar">
       <h2>Inventory</h2>
-      <p id="inventoryCount">Treasure: 0</p>
+      <p id="inventoryCount">Coins: 0</p>
     </aside>
   </div>
 `;
@@ -56,7 +56,30 @@ let playerInventoryCount = 0;
 
 function updateInventoryDisplay() {
   const inventoryCount = document.getElementById("inventoryCount")!;
-  inventoryCount.textContent = `Treasure: ${playerInventoryCount}`;
+  inventoryCount.textContent = `Coins: ${playerInventoryCount}`;
+}
+
+// Interfaces and Flyweight pattern
+interface Cell {
+  i: number;
+  j: number;
+}
+
+interface Coin {
+  cell: Cell;
+  serial: number;
+}
+
+const cellCache: { [key: string]: Cell } = {};
+
+function getCell(lat: number, lng: number): Cell {
+  const i = Math.floor(lat * 1e4);
+  const j = Math.floor(lng * 1e4);
+  const key = `${i}:${j}`;
+  if (!cellCache[key]) {
+    cellCache[key] = { i, j };
+  }
+  return cellCache[key];
 }
 
 function spawnTreasure(i: number, j: number) {
@@ -66,7 +89,12 @@ function spawnTreasure(i: number, j: number) {
     origin.lng + j * GRID_SIZE,
   );
 
-  let numberOfTreasures = Math.floor(Math.random() * 5) + 1;
+  const cell = getCell(treasureLocation.lat, treasureLocation.lng);
+  const numberOfTreasures = Math.floor(Math.random() * 5) + 1;
+  const coins: Coin[] = Array.from(
+    { length: numberOfTreasures },
+    (_, serial) => ({ cell, serial }),
+  );
 
   // Add a 🏴‍☠️ marker to represent the treasure
   const treasureMarker = leaflet.marker(treasureLocation, {
@@ -81,25 +109,26 @@ function spawnTreasure(i: number, j: number) {
 
   treasureMarker.bindPopup(() => {
     const popupDiv = document.createElement("div");
-    popupDiv.innerHTML = `<div>Treasure at "${i},${j}"</div>`;
+    popupDiv.innerHTML = `<div>Treasure at "${cell.i},${cell.j}"</div>`;
 
     const treasureList = document.createElement("ul");
-    for (let k = 0; k < numberOfTreasures; k++) {
+    coins.forEach((coin, index) => {
       const treasureItem = document.createElement("li");
-      treasureItem.textContent = `💎 Treasure`;
+      treasureItem.textContent = `💎 ${cell.i}:${cell.j}#${coin.serial}`;
 
       const collectButton = document.createElement("button");
       collectButton.textContent = "Collect";
       collectButton.onclick = () => {
         playerInventoryCount++;
         updateInventoryDisplay();
+        coins.splice(index, 1);
         treasureMarker.closePopup();
         treasureMarker.openPopup();
       };
 
       treasureItem.appendChild(collectButton);
       treasureList.appendChild(treasureItem);
-    }
+    });
     popupDiv.appendChild(treasureList);
 
     const depositButton = document.createElement("button");
@@ -108,7 +137,8 @@ function spawnTreasure(i: number, j: number) {
       if (playerInventoryCount > 0) {
         playerInventoryCount--;
         updateInventoryDisplay();
-        numberOfTreasures++;
+        const newCoin: Coin = { cell, serial: coins.length };
+        coins.push(newCoin);
         treasureMarker.closePopup();
         treasureMarker.openPopup();
       } else {
