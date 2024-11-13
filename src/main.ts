@@ -443,12 +443,12 @@ function updateInventoryDisplay() {
 
   playerInventory.forEach((coin) => {
     const listItem = document.createElement("li");
-    listItem.textContent = `🪙 ${coin}`;
+    listItem.textContent = `💎 ${coin}`;
     listItem.style.cursor = "pointer";
 
     listItem.onclick = () => {
       selectedCoin = coin;
-      selectedCoinDisplay.textContent = `Selected coin: 🪙 ${coin}`;
+      selectedCoinDisplay.textContent = `Selected coin: 💎 ${coin}`;
       const [cellCoords] = coin.split("#");
       const [i, j] = cellCoords.split(":").map(Number);
       const coinLat = i * TILE_DEGREES;
