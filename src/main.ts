@@ -66,6 +66,88 @@ class Cache implements Memento<string> {
   }
 }
 
+class Player {
+  public cell: Cell;
+  public inventory: string[];
+  public movementHistory: leaflet.LatLng[];
+
+  constructor(initialCell: Cell) {
+    this.cell = initialCell;
+    this.inventory = [];
+    this.movementHistory = [
+      leaflet.latLng(
+        initialCell.i * TILE_DEGREES,
+        initialCell.j * TILE_DEGREES,
+      ),
+    ];
+  }
+
+  move(direction: "north" | "south" | "east" | "west") {
+    let { i, j } = this.cell;
+    switch (direction) {
+      case "north":
+        i += 1;
+        break;
+      case "south":
+        i -= 1;
+        break;
+      case "east":
+        j += 1;
+        break;
+      case "west":
+        j -= 1;
+        break;
+    }
+    this.cell = CellFactory.getCell(i, j);
+    const newLat = i * TILE_DEGREES;
+    const newLng = j * TILE_DEGREES;
+    this.movementHistory.push(leaflet.latLng(newLat, newLng));
+  }
+
+  addCoin(coin: string) {
+    this.inventory.push(coin);
+  }
+
+  removeCoin(coin: string) {
+    this.inventory = this.inventory.filter((c) => c !== coin);
+  }
+
+  saveState() {
+    localStorage.setItem(
+      "playerCell",
+      JSON.stringify([this.cell.i, this.cell.j]),
+    );
+    localStorage.setItem("playerInventory", JSON.stringify(this.inventory));
+    localStorage.setItem(
+      "movementHistory",
+      JSON.stringify(
+        this.movementHistory.map((latLng) => [latLng.lat, latLng.lng]),
+      ),
+    );
+  }
+
+  loadState() {
+    const savedPlayerCell = localStorage.getItem("playerCell");
+    const savedInventory = localStorage.getItem("playerInventory");
+    const savedMovementHistory = localStorage.getItem("movementHistory");
+
+    if (savedPlayerCell) {
+      const [i, j] = JSON.parse(savedPlayerCell);
+      this.cell = CellFactory.getCell(i, j);
+    }
+
+    if (savedInventory) {
+      this.inventory = JSON.parse(savedInventory);
+    }
+
+    if (savedMovementHistory) {
+      this.movementHistory = JSON.parse(savedMovementHistory).map(
+        (coords: [number, number]) => leaflet.latLng(coords[0], coords[1]),
+      );
+    }
+  }
+}
+
 // =========== Constants and Initialization =============
 
 const APP_NAME = "Treasure Seeker 🏴‍☠️";
@@ -125,11 +207,10 @@ leaflet
 // =========== Player and Cache State Management =============
 
 document.getElementById("centerPlayer")!.onclick = () => {
-  map.setView([playerCell.i * TILE_DEGREES, playerCell.j * TILE_DEGREES], 17);
+  map.setView([player.cell.i * TILE_DEGREES, player.cell.j * TILE_DEGREES], 17);
 };
-let playerCell = convertLatLngToGrid(
-  OAKES_COORDINATES.lat,
-  OAKES_COORDINATES.lng,
+const player = new Player(
+  convertLatLngToGrid(OAKES_COORDINATES.lat, OAKES_COORDINATES.lng),
 );
 const cacheStorage: Map<string, string> = new Map();
 const originalCacheStorage: Map<string, string> = new Map();
@@ -150,11 +231,8 @@ const playerMarker = leaflet.marker([
 playerMarker.bindTooltip("You are here!");
 
 // =========== Movement History Tracking ===========
-let movementHistory: leaflet.LatLng[] = [
-  leaflet.latLng(OAKES_COORDINATES.lat, OAKES_COORDINATES.lng),
-];
 const movementPolyline = leaflet
-  .polyline(movementHistory, { color: "blue" })
+  .polyline(player.movementHistory, { color: "blue" })
   .addTo(map);
 
 function convertLatLngToGrid(lat: number, lng: number): Cell {
@@ -170,22 +248,12 @@ function generateCoinID(cell: Cell, serial: number): string {
 // =========== Loading & Saving ===========
 // Load game state from localStorage
 function loadGameState() {
-  const savedPlayerCell = localStorage.getItem("playerCell");
-  const savedInventory = localStorage.getItem("playerInventory");
+  player.loadState();
+  map.setView([player.cell.i * TILE_DEGREES, player.cell.j * TILE_DEGREES]);
+  movementPolyline.setLatLngs(player.movementHistory);
+  UI.updateInventoryDisplay(player);
+
   const savedCacheStorage = localStorage.getItem("cacheStorage");
-  const savedMovementHistory = localStorage.getItem("movementHistory");
-
-  if (savedPlayerCell) {
-    const [i, j] = JSON.parse(savedPlayerCell);
-    playerCell = CellFactory.getCell(i, j);
-    map.setView([i * TILE_DEGREES, j * TILE_DEGREES]);
-  }
-
-  if (savedInventory) {
-    playerInventory = JSON.parse(savedInventory);
-    updateInventoryDisplay();
-  }
-
   if (savedCacheStorage) {
     const cacheData = JSON.parse(savedCacheStorage);
     for (const key in cacheData) {
@@ -194,22 +262,11 @@ function loadGameState() {
       }
     }
   }
-
-  if (savedMovementHistory) {
-    movementHistory = JSON.parse(savedMovementHistory).map(
-      (coords: [number, number]) => leaflet.latLng(coords[0], coords[1]),
-    );
-    movementPolyline.setLatLngs(movementHistory);
-  }
 }
 
 // Save game state to localStorage
 function saveGameState() {
-  localStorage.setItem(
-    "playerCell",
-    JSON.stringify([playerCell.i, playerCell.j]),
-  );
-  localStorage.setItem("playerInventory", JSON.stringify(playerInventory));
+  player.saveState();
   const cacheStorageObject: { [key: string]: string } = {};
   cacheStorage.forEach((value, key) => {
     cacheStorageObject[key] = value;
@@ -218,11 +275,6 @@ function saveGameState() {
   localStorage.setItem(
     "cacheStorage",
     JSON.stringify(cacheStorageObject),
-  );
-
-  localStorage.setItem(
-    "movementHistory",
-    JSON.stringify(movementHistory.map((latLng) => [latLng.lat, latLng.lng])),
   );
 }
 
@@ -279,8 +331,8 @@ function spawnCache(cell: Cell) {
       collectButton.onclick = () => {
         const collectedCoin = cache.removeCoin(coinIndex);
         if (collectedCoin) {
-          playerInventory.push(collectedCoin);
-          updateInventoryDisplay();
+          player.addCoin(collectedCoin);
+          UI.updateInventoryDisplay(player);
           cacheStorage.set(cellKey, cache.toMemento()); // Save cache state
           saveGameState(); // Save game state
           cacheMarker.closePopup();
@@ -298,11 +350,9 @@ function spawnCache(cell: Cell) {
     depositButton.onclick = () => {
       if (selectedCoin) {
         cache.addCoin(selectedCoin);
-        playerInventory = playerInventory.filter(
-          (coin) => coin !== selectedCoin,
-        );
+        player.removeCoin(selectedCoin);
         selectedCoin = null;
-        updateInventoryDisplay();
+        UI.updateInventoryDisplay(player);
         cacheStorage.set(cellKey, cache.toMemento()); // Save cache state
         saveGameState(); // Save game state
         cacheMarker.closePopup();
@@ -322,13 +372,13 @@ function regenerateCaches() {
   cacheMarkers.forEach((marker) => map.removeLayer(marker));
   cacheMarkers = [];
   for (
-    let i = playerCell.i - VISIBLE_RADIUS;
-    i <= playerCell.i + VISIBLE_RADIUS;
+    let i = player.cell.i - VISIBLE_RADIUS;
+    i <= player.cell.i + VISIBLE_RADIUS;
     i++
   ) {
     for (
-      let j = playerCell.j - VISIBLE_RADIUS;
-      j <= playerCell.j + VISIBLE_RADIUS;
+      let j = player.cell.j - VISIBLE_RADIUS;
+      j <= player.cell.j + VISIBLE_RADIUS;
       j++
     ) {
       if (luck([i, j].toString()) < CACHE_SPAWN_PROBABILITY) {
@@ -340,47 +390,30 @@ function regenerateCaches() {
 
 // =========== Controls =============
 
-function movePlayer(direction: "north" | "south" | "east" | "west") {
-  let { i, j } = playerCell;
-  switch (direction) {
-    case "north":
-      i += 1;
-      break;
-    case "south":
-      i -= 1;
-      break;
-    case "east":
-      j += 1;
-      break;
-    case "west":
-      j -= 1;
-      break;
-  }
-  playerCell = CellFactory.getCell(i, j);
-  const newLat = i * TILE_DEGREES;
-  const newLng = j * TILE_DEGREES;
+// function movePlayer(direction: "north" | "south" | "east" | "west") {
+//   player.move(direction);
+//   const newLat = player.cell.i * TILE_DEGREES;
+//   const newLng = player.cell.j * TILE_DEGREES;
 
-  map.setView([newLat, newLng]);
-  playerMarker.setLatLng([newLat, newLng]); // Move player marker
+//   map.setView([newLat, newLng]);
+//   playerMarker.setLatLng([newLat, newLng]); // Move player marker
 
-  const newPosition = leaflet.latLng(newLat, newLng);
-  movementHistory.push(newPosition);
-  movementPolyline.setLatLngs(movementHistory);
+//   movementPolyline.setLatLngs(player.movementHistory);
 
-  saveGameState();
-  regenerateCaches();
-}
+//   saveGameState();
+//   regenerateCaches();
+// }
 
-function getLocation() {
+function getLocation(player: Player) {
   navigator.geolocation.getCurrentPosition(
     (position) => {
       const { latitude, longitude } = position.coords;
-      playerCell = convertLatLngToGrid(latitude, longitude);
+      player.cell = convertLatLngToGrid(latitude, longitude);
       map.setView([latitude, longitude]);
       playerMarker.setLatLng([latitude, longitude]); // Move player marker
 
-      movementHistory.push(leaflet.latLng(latitude, longitude));
-      movementPolyline.setLatLngs(movementHistory);
+      player.movementHistory.push(leaflet.latLng(latitude, longitude));
+      movementPolyline.setLatLngs(player.movementHistory);
 
       saveGameState();
       regenerateCaches();
@@ -396,7 +429,7 @@ function getLocation() {
   );
 }
 
-function reset() {
+function reset(player: Player) {
   const confirmation = prompt(
     "Are you sure you want to erase your game state? Type 'yes' to confirm.",
   );
@@ -404,66 +437,99 @@ function reset() {
     return;
   }
 
-  playerInventory = [];
+  player.inventory = [];
   selectedCoin = null;
-  updateInventoryDisplay();
+  UI.updateInventoryDisplay(player);
   cacheStorage.clear();
   originalCacheStorage.forEach((initialState, cellKey) => {
     cacheStorage.set(cellKey, initialState);
   });
-  playerCell = convertLatLngToGrid(
+  player.cell = convertLatLngToGrid(
     OAKES_COORDINATES.lat,
     OAKES_COORDINATES.lng,
   );
   map.setView([OAKES_COORDINATES.lat, OAKES_COORDINATES.lng], 17);
   playerMarker.setLatLng([OAKES_COORDINATES.lat, OAKES_COORDINATES.lng]); // Reset player marker
-  movementHistory = [
+  player.movementHistory = [
     leaflet.latLng(OAKES_COORDINATES.lat, OAKES_COORDINATES.lng),
   ];
-  movementPolyline.setLatLngs(movementHistory);
+  movementPolyline.setLatLngs(player.movementHistory);
 
   saveGameState();
   regenerateCaches();
 }
 
-document.getElementById("moveUp")!.onclick = () => movePlayer("north");
-document.getElementById("moveDown")!.onclick = () => movePlayer("south");
-document.getElementById("moveLeft")!.onclick = () => movePlayer("west");
-document.getElementById("moveRight")!.onclick = () => movePlayer("east");
-document.getElementById("geoToggle")!.onclick = () => getLocation();
-document.getElementById("reset")!.onclick = () => reset();
+const UI = {
+  updateInventoryDisplay(player: Player) {
+    const inventoryList = document.getElementById("inventoryList")!;
+    const selectedCoinDisplay = document.getElementById("selectedCoinDisplay")!;
+    inventoryList.innerHTML = "";
 
-let playerInventory: string[] = [];
-let selectedCoin: string | null = null;
+    player.inventory.forEach((coin) => {
+      const listItem = document.createElement("li");
+      listItem.textContent = `💎 ${coin}`;
+      listItem.style.cursor = "pointer";
 
-function updateInventoryDisplay() {
-  const inventoryList = document.getElementById("inventoryList")!;
-  const selectedCoinDisplay = document.getElementById("selectedCoinDisplay")!;
-  inventoryList.innerHTML = "";
+      listItem.onclick = () => {
+        selectedCoin = coin;
+        selectedCoinDisplay.textContent = `Selected coin: 💎 ${coin}`;
+        const [cellCoords] = coin.split("#");
+        const [i, j] = cellCoords.split(":").map(Number);
+        const coinLat = i * TILE_DEGREES;
+        const coinLng = j * TILE_DEGREES;
+        map.setView([coinLat, coinLng], 17);
+      };
 
-  playerInventory.forEach((coin) => {
-    const listItem = document.createElement("li");
-    listItem.textContent = `💎 ${coin}`;
-    listItem.style.cursor = "pointer";
+      inventoryList.appendChild(listItem);
+    });
+  },
 
-    listItem.onclick = () => {
-      selectedCoin = coin;
-      selectedCoinDisplay.textContent = `Selected coin: 💎 ${coin}`;
-      const [cellCoords] = coin.split("#");
-      const [i, j] = cellCoords.split(":").map(Number);
-      const coinLat = i * TILE_DEGREES;
-      const coinLng = j * TILE_DEGREES;
-      map.setView([coinLat, coinLng], 17);
+  centerPlayer(player: Player) {
+    map.setView(
+      [player.cell.i * TILE_DEGREES, player.cell.j * TILE_DEGREES],
+      17,
+    );
+  },
+
+  setupEventListeners(player: Player) {
+    document.getElementById("moveUp")!.onclick = () => {
+      player.move("north");
+      this.centerPlayer(player);
+      player.saveState();
+      regenerateCaches();
     };
+    document.getElementById("moveDown")!.onclick = () => {
+      player.move("south");
+      this.centerPlayer(player);
+      player.saveState();
+      regenerateCaches();
+    };
+    document.getElementById("moveLeft")!.onclick = () => {
+      player.move("west");
+      this.centerPlayer(player);
+      player.saveState();
+      regenerateCaches();
+    };
+    document.getElementById("moveRight")!.onclick = () => {
+      player.move("east");
+      this.centerPlayer(player);
+      player.saveState();
+      regenerateCaches();
+    };
+    document.getElementById("geoToggle")!.onclick = () => getLocation(player);
+    document.getElementById("reset")!.onclick = () => reset(player);
+    document.getElementById("centerPlayer")!.onclick = () =>
+      this.centerPlayer(player);
+  },
+};
 
-    inventoryList.appendChild(listItem);
-  });
-}
+let selectedCoin: string | null = null;
 
 // Load initial game state
 loadGameState();
 playerMarker.setLatLng([
-  playerCell.i * TILE_DEGREES,
-  playerCell.j * TILE_DEGREES,
+  player.cell.i * TILE_DEGREES,
+  player.cell.j * TILE_DEGREES,
 ]); // Set initial player marker position
 regenerateCaches();
+UI.setupEventListeners(player);
